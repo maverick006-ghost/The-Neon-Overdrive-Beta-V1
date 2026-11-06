@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GameEngine } from '../game/engine';
 import { ThreeSceneManager } from '../game/threeScene';
-import { GameStats, GameStatus, GameWorld, PlayerCar, TouchInputState } from '../game/types';
+import { GameStats, GameStatus, GameWorld, PlayerCar, TouchInputState, VehicleId } from '../game/types';
 import { sound } from '../game/audio';
 
 interface GameCanvasProps {
@@ -14,6 +14,7 @@ interface GameCanvasProps {
   isPlaying: boolean;
   status: GameStatus;
   world: GameWorld;
+  vehicle: VehicleId;
   onGameOver: (stats: GameStats) => void;
   onUpdateHUD: (player: PlayerCar, score: number, distance: number, alert: string | null) => void;
   touchInput: TouchInputState;
@@ -24,6 +25,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   isPlaying,
   status,
   world,
+  vehicle,
   onGameOver,
   onUpdateHUD,
   touchInput,
@@ -64,6 +66,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, [world]);
 
+  // Synchronize dynamic vehicle switching without remounting canvas or scene
+  useEffect(() => {
+    if (sceneManagerRef.current) {
+      sceneManagerRef.current.setVehicle(vehicle);
+    }
+  }, [vehicle]);
+
   // Keep touch flight input in sync with engine
   useEffect(() => {
     engine.setTouchFlightInput(touchInput.fly);
@@ -74,7 +83,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const sceneManager = new ThreeSceneManager(canvas, world);
+    const sceneManager = new ThreeSceneManager(canvas, world, vehicle);
     sceneManagerRef.current = sceneManager;
 
     const handleResize = () => {

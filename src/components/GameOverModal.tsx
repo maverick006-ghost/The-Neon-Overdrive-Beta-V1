@@ -5,12 +5,13 @@
 
 import React, { useEffect } from 'react';
 import { RotateCcw, Home, Award } from 'lucide-react';
-import { GameStats, GameWorld, WORLD_CONFIGS } from '../game/types';
+import { GameStats, GameWorld, WORLD_CONFIGS, VehicleId, VEHICLE_CONFIGS } from '../game/types';
 
 interface GameOverModalProps {
   stats: GameStats;
   isNewRecord: boolean;
   world?: GameWorld;
+  vehicle?: VehicleId;
   onRestart: () => void;
   onReturnToMenu?: () => void;
 }
@@ -19,6 +20,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   stats,
   isNewRecord,
   world = 'EARTH',
+  vehicle = 'AERO_X',
   onRestart,
   onReturnToMenu,
 }) => {
@@ -52,9 +54,11 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           MISSION CONCLUDED
         </h2>
 
-        {/* Sector Label */}
-        <div className="text-[11px] font-mono tracking-[0.2em] text-[#b8bcc1] uppercase mt-1">
-          {worldCfg.codename}
+        {/* Sector & Vehicle Label */}
+        <div className="flex items-center justify-center gap-2 text-[11px] font-mono tracking-[0.2em] text-[#b8bcc1] uppercase mt-1">
+          <span>{worldCfg.codename}</span>
+          <span className="text-[#333333]">·</span>
+          <span className="text-[#38bdf8]">{VEHICLE_CONFIGS[vehicle]?.name}</span>
         </div>
 
         {/* Primary Score Presentation */}

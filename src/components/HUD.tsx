@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { Volume2, VolumeX, Pause } from 'lucide-react';
-import { GameWorld, PlayerCar, WORLD_CONFIGS } from '../game/types';
+import { GameWorld, PlayerCar, WORLD_CONFIGS, VehicleId, VEHICLE_CONFIGS } from '../game/types';
 
 interface HUDProps {
   score: number;
@@ -13,6 +13,7 @@ interface HUDProps {
   distance: number;
   player: PlayerCar;
   world?: GameWorld;
+  vehicle?: VehicleId;
   isMuted: boolean;
   onToggleMute: () => void;
   onPause: () => void;
@@ -25,6 +26,7 @@ export const HUD: React.FC<HUDProps> = ({
   distance,
   player,
   world = 'EARTH',
+  vehicle = 'AERO_X',
   isMuted,
   onToggleMute,
   onPause,
@@ -118,6 +120,10 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="text-[#333333]">·</span>
             <span className="text-[#b8bcc1]">⚡ {player.coinsCollected || 0}</span>
             <span className="text-[#333333] hidden sm:inline">·</span>
+            <span className="hidden sm:inline text-[#38bdf8] font-semibold">
+              {VEHICLE_CONFIGS[vehicle]?.name}
+            </span>
+            <span className="text-[#333333] hidden sm:inline">/</span>
             <span className="hidden sm:inline text-[#a3a3a3]">
               {WORLD_CONFIGS[world]?.name}
             </span>

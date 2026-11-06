@@ -6,17 +6,19 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GameEngine } from './game/engine';
 import { sound } from './game/audio';
-import { GameStats, GameStatus, GameWorld, PlayerCar, TouchInputState } from './game/types';
+import { GameStats, GameStatus, GameWorld, PlayerCar, TouchInputState, VehicleId } from './game/types';
 import { GameCanvas } from './components/GameCanvas';
 import { HUD } from './components/HUD';
 import { StartScreen } from './components/StartScreen';
 import { GameOverModal } from './components/GameOverModal';
 import { PauseModal } from './components/PauseModal';
 import { TouchControls } from './components/TouchControls';
+import { ModelInspector } from './components/ModelInspector';
 
 export default function App() {
   const engineRef = useRef<GameEngine>(new GameEngine());
   const [status, setStatus] = useState<GameStatus>('MENU');
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
 
   // Persistent World Selection (MOON, EARTH, MARS) with safe localStorage fallback
   const [selectedWorld, setSelectedWorld] = useState<GameWorld>(() => {
@@ -29,6 +31,19 @@ export default function App() {
       // Safe fallback if localStorage is unavailable
     }
     return 'EARTH';
+  });
+
+  // Persistent Vehicle Selection (AERO_X, CYBER_GT, NEON_CYCLE) - AERO-X is flagship default
+  const [selectedVehicle, setSelectedVehicle] = useState<VehicleId>(() => {
+    try {
+      const saved = localStorage.getItem('neon_overdrive_vehicle');
+      if (saved === 'AERO_X' || saved === 'CYBER_GT' || saved === 'NEON_CYCLE') {
+        return saved as VehicleId;
+      }
+    } catch {
+      // Safe fallback if localStorage is unavailable
+    }
+    return 'AERO_X';
   });
 
   const [score, setScore] = useState<number>(0);
@@ -53,6 +68,18 @@ export default function App() {
     setSelectedWorld(world);
     try {
       localStorage.setItem('neon_overdrive_world', world);
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+  }, []);
+
+  const handleSelectVehicle = useCallback((vehicle: VehicleId) => {
+    sound.init();
+    sound.playUiClick();
+    setSelectedVehicle(vehicle);
+    engineRef.current.setVehicle(vehicle);
+    try {
+      localStorage.setItem('neon_overdrive_vehicle', vehicle);
     } catch {
       // Ignore storage errors in restricted contexts
     }
@@ -158,6 +185,7 @@ export default function App() {
         isPlaying={status === 'PLAYING'}
         status={status}
         world={selectedWorld}
+        vehicle={selectedVehicle}
         onGameOver={handleGameOver}
         onUpdateHUD={handleUpdateHUD}
         touchInput={touchInput}
@@ -171,6 +199,7 @@ export default function App() {
           distance={distance}
           player={playerState}
           world={selectedWorld}
+          vehicle={selectedVehicle}
           isMuted={isMuted}
           onToggleMute={toggleMute}
           onPause={handlePauseGame}
@@ -191,15 +220,27 @@ export default function App() {
         />
       )}
 
-      {/* 4. Start Screen Overlay with World Selector */}
+      {/* 4. Start Screen Overlay with World Selector & Vehicle Garage */}
       {status === 'MENU' && (
         <StartScreen
           highScore={highScore}
           selectedWorld={selectedWorld}
           onSelectWorld={handleSelectWorld}
+          selectedVehicle={selectedVehicle}
+          onSelectVehicle={handleSelectVehicle}
           isMuted={isMuted}
           onToggleMute={toggleMute}
           onStart={handleStartGame}
+          onOpenInspector={() => setIsInspectorOpen(true)}
+        />
+      )}
+
+      {/* 4b. 3D Visual Quality Gate Inspector */}
+      {isInspectorOpen && (
+        <ModelInspector
+          vehicleId={selectedVehicle}
+          onSelectVehicle={handleSelectVehicle}
+          onClose={() => setIsInspectorOpen(false)}
         />
       )}
 
@@ -221,6 +262,7 @@ export default function App() {
           stats={finalStats}
           isNewRecord={isNewRecord}
           world={selectedWorld}
+          vehicle={selectedVehicle}
           onRestart={handleRestartGame}
           onReturnToMenu={handleReturnToMenu}
         />

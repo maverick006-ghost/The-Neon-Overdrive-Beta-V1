@@ -51,6 +51,10 @@ export const WORLD_CONFIGS: Record<GameWorld, WorldConfig> = {
   },
 };
 
+export type { VehicleId, VehicleCategory, VehicleDef } from './vehicles/vehicleTypes';
+export { VEHICLE_DEFINITIONS as VEHICLE_CONFIGS } from './vehicles/vehicleRegistry';
+import type { VehicleId } from './vehicles/vehicleTypes';
+
 export type LaneIndex = 0 | 1 | 2; // 0 = Left, 1 = Center, 2 = Right
 
 export type ObstacleType = 'traffic' | 'barrier' | 'gap' | 'coin' | 'powerup' | 'orb';

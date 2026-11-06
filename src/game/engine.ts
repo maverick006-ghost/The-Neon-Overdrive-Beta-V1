@@ -4,10 +4,11 @@
  */
 
 import { sound } from './audio';
-import { GameObject, GameStats, LaneIndex, PlayerCar, PowerupType } from './types';
+import { GameObject, GameStats, LaneIndex, PlayerCar, PowerupType, VehicleId } from './types';
 
 export class GameEngine {
   public player: PlayerCar;
+  public currentVehicleId: VehicleId = 'AERO_X';
   public objects: GameObject[] = [];
   public roadScrollZ: number = 0;
   public roadCurvature: number = 0;
@@ -56,6 +57,10 @@ export class GameEngine {
     } catch {
       return defaultValue;
     }
+  }
+
+  public setVehicle(vehicleId: VehicleId) {
+    this.currentVehicleId = vehicleId;
   }
 
   private saveSafeNumber(key: string, value: number) {
@@ -605,9 +610,10 @@ export class GameEngine {
 
       // C. GROUND OBSTACLES: Traffic, Barrier, Gap (Damaging)
       else if ((obj.type === 'traffic' || obj.type === 'barrier' || obj.type === 'gap') && !obj.cleared) {
-        // Active collision zone along Z
+        // Active collision zone along Z (with vehicle-specific lateral clearance footprint)
         if (distZ >= -24 && distZ <= 24) {
-          if (lateralDist < 0.44) {
+          const collisionWidth = this.currentVehicleId === 'NEON_CYCLE' ? 0.32 : 0.44;
+          if (lateralDist < collisionWidth) {
             if (isAirborne) {
               // Successfully flying over the obstacle!
               obj.hasOverflown = true;
