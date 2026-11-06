@@ -4,7 +4,107 @@
  */
 
 import * as THREE from 'three';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { VehicleModelInstance } from './vehicleTypes';
+
+let aeroXAssetPromise: Promise<GLTF> | undefined;
+
+function loadAeroXAsset(): Promise<GLTF> {
+  if (!aeroXAssetPromise) {
+    aeroXAssetPromise = import('three/addons/loaders/GLTFLoader.js')
+      .then(({ GLTFLoader }) =>
+        new GLTFLoader().loadAsync('/models/aero-x/tesla_roadster_2.0_will_be_enchanced_soon.glb')
+      )
+      .catch((error: unknown) => {
+        aeroXAssetPromise = undefined;
+        throw error;
+      });
+  }
+  return aeroXAssetPromise;
+}
+
+function disposeOwnedResources(object: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+
+  object.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    geometries.add(mesh.geometry);
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((material) => materials.add(material));
+    } else {
+      materials.add(mesh.material);
+    }
+  });
+
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+}
+
+function attachAeroXWheelPivots(assetRoot: THREE.Group): {
+  pivots: THREE.Group[];
+  frontPivots: THREE.Group[];
+} {
+  assetRoot.updateWorldMatrix(true, true);
+  const candidates: { mesh: THREE.Mesh; center: THREE.Vector3 }[] = [];
+
+  assetRoot.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    const bounds = new THREE.Box3().setFromObject(mesh);
+    const size = bounds.getSize(new THREE.Vector3());
+    const radialSize = Math.min(size.y, size.z);
+    if (
+      size.x <= radialSize * 0.7 &&
+      radialSize > 0.35 &&
+      Math.abs(size.y - size.z) < radialSize * 0.35
+    ) {
+      candidates.push({ mesh, center: bounds.getCenter(new THREE.Vector3()) });
+    }
+  });
+
+  const wheelClusters: {
+    center: THREE.Vector3;
+    meshes: THREE.Mesh[];
+  }[] = [];
+  candidates.forEach(({ mesh, center }) => {
+    const cluster = wheelClusters.find(
+      (wheel) =>
+        Math.hypot(wheel.center.x - center.x, wheel.center.z - center.z) < 0.18
+    );
+    if (cluster) {
+      cluster.meshes.push(mesh);
+      cluster.center.add(
+        center.clone().sub(cluster.center).multiplyScalar(1 / cluster.meshes.length)
+      );
+    } else {
+      wheelClusters.push({ center: center.clone(), meshes: [mesh] });
+    }
+  });
+
+  if (wheelClusters.length !== 4) {
+    console.warn(`AERO-X asset wheel animation unavailable: detected ${wheelClusters.length} wheel assemblies.`);
+    return { pivots: [], frontPivots: [] };
+  }
+
+  const pivots: THREE.Group[] = [];
+  const frontPivots: THREE.Group[] = [];
+
+  wheelClusters.forEach((wheel) => {
+    const pivot = new THREE.Group();
+    pivot.position.copy(assetRoot.worldToLocal(wheel.center.clone()));
+    pivot.name = 'AERO_X_Asset_Wheel_Pivot';
+    assetRoot.add(pivot);
+    pivot.updateWorldMatrix(true, false);
+    wheel.meshes.forEach((mesh) => pivot.attach(mesh));
+
+    pivots.push(pivot);
+    if (wheel.center.z < 0) frontPivots.push(pivot);
+  });
+
+  return { pivots, frontPivots };
+}
 
 /**
  * Vehicle 01 — AERO-X
@@ -26,6 +126,11 @@ export function createAeroXModel(): VehicleModelInstance {
   const thrusterFlames: THREE.Mesh[] = [];
   const thrusterLights: THREE.PointLight[] = [];
   const thrusterPositions: THREE.Vector3[] = [];
+  const boosterNozzles: THREE.Mesh[] = [];
+  const boosterCores: THREE.Mesh[] = [];
+  let rearBladeMesh: THREE.Mesh | null = null;
+  let loadedAssetRoot: THREE.Group | null = null;
+  let isDisposed = false;
 
   // =========================================================================
   // 1. PBR MATERIALS RIG (Accurately tuned to Reference 1)
@@ -33,12 +138,12 @@ export function createAeroXModel(): VehicleModelInstance {
   // Liquid Titanium Silver with deep multi-layer clearcoat
   const titaniumBodyPaint = new THREE.MeshPhysicalMaterial({
     color: 0xb5bac3,
-    metalness: 0.94,
-    roughness: 0.18,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
-    reflectivity: 0.98,
-    envMapIntensity: 1.6,
+    metalness: 0.86,
+    roughness: 0.23,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.1,
+    reflectivity: 0.92,
+    envMapIntensity: 1.15,
   });
 
   // Dark gloss carbon-fiber aero surfaces (splitter, diffuser, wing, tunnels)
@@ -122,64 +227,139 @@ export function createAeroXModel(): VehicleModelInstance {
   const bodyGroup = new THREE.Group();
   rootGroup.add(bodyGroup);
 
+  const proceduralWheelGroup = new THREE.Group();
+  proceduralWheelGroup.name = 'AERO_X_Procedural_Wheels';
+  rootGroup.add(proceduralWheelGroup);
+
+  const assetBodyGroup = new THREE.Group();
+  assetBodyGroup.name = 'AERO_X_GLTF_Model';
+  rootGroup.add(assetBodyGroup);
+
+  const assetAccentGroup = new THREE.Group();
+  assetAccentGroup.name = 'AERO_X_GLTF_Thruster_Accents';
+  assetBodyGroup.add(assetAccentGroup);
+
+  const wheelSpecs = [
+    { x: -0.90, y: 0.32, z: -1.25, isFront: true, isLeft: true },
+    { x: 0.90, y: 0.32, z: -1.25, isFront: true, isLeft: false },
+    { x: -0.96, y: 0.35, z: 1.25, isFront: false, isLeft: true },
+    { x: 0.96, y: 0.35, z: 1.25, isFront: false, isLeft: false },
+  ];
+
   // =========================================================================
-  // 2. SCULPTED MAIN MONOCOQUE & HOOD WITH SUNKEN EXTRACTION VALLEY
+  // 2. SCULPTED CUSTOM-GENERATED TITANIUM MONOCOQUE
   // =========================================================================
   // Central underbody floor tray
-  const floorTrayGeo = new THREE.BoxGeometry(1.65, 0.08, 4.3);
+  const floorTrayGeo = new THREE.BoxGeometry(1.35, 0.035, 3.55);
   const floorTray = new THREE.Mesh(floorTrayGeo, carbonFiberMat);
-  floorTray.position.set(0, 0.14, 0);
+  floorTray.position.set(0, 0.105, 0);
   floorTray.castShadow = true;
   bodyGroup.add(floorTray);
 
-  // Sculpted central hull body
-  const centralHullGeo = new THREE.CylinderGeometry(0.85, 0.98, 4.2, 16);
-  centralHullGeo.rotateX(Math.PI * 0.5);
-  centralHullGeo.scale(1.05, 0.32, 1.0);
-  const centralHull = new THREE.Mesh(centralHullGeo, titaniumBodyPaint);
-  centralHull.position.set(0, 0.36, 0);
-  centralHull.castShadow = true;
-  bodyGroup.add(centralHull);
+  const bodySections = [
+    [-2.66, 0.012, 0.29, 0.012],
+    [-2.50, 0.16, 0.32, 0.065],
+    [-2.20, 0.43, 0.36, 0.14],
+    [-1.82, 0.76, 0.39, 0.21],
+    [-1.35, 0.99, 0.41, 0.255],
+    [-0.90, 1.045, 0.42, 0.26],
+    [-0.35, 0.94, 0.41, 0.245],
+    [0.35, 0.92, 0.41, 0.245],
+    [0.90, 0.99, 0.42, 0.265],
+    [1.32, 1.075, 0.42, 0.27],
+    [1.72, 1.045, 0.41, 0.25],
+    [2.05, 0.91, 0.39, 0.205],
+    [2.32, 0.59, 0.35, 0.14],
+    [2.48, 0.012, 0.31, 0.012],
+  ] as const;
+  const longitudinalSegments = 112;
+  const radialSegments = 48;
+  const vertices: number[] = [];
+  const indices: number[] = [];
 
-  // Front Pointed Aerodynamic Nose Prow
-  const noseProwGeo = new THREE.ConeGeometry(0.78, 1.25, 14);
-  noseProwGeo.rotateX(Math.PI * 0.5);
-  noseProwGeo.scale(1.15, 0.30, 1.0);
-  const noseProw = new THREE.Mesh(noseProwGeo, titaniumBodyPaint);
-  noseProw.position.set(0, 0.30, -2.15);
-  noseProw.castShadow = true;
-  bodyGroup.add(noseProw);
+  const interpolateSection = (z: number, channel: number) => {
+    let segment = 0;
+    while (segment < bodySections.length - 2 && z > bodySections[segment + 1][0]) {
+      segment++;
+    }
 
-  // Deeply Sunken Front Hood Valley (Iconic Evija extractor scoop)
-  const hoodValleyGeo = new THREE.BoxGeometry(0.75, 0.08, 1.15);
-  const hoodValley = new THREE.Mesh(hoodValleyGeo, carbonFiberMat);
-  hoodValley.position.set(0, 0.32, -1.45);
-  hoodValley.rotation.x = -0.14;
-  bodyGroup.add(hoodValley);
+    const current = bodySections[segment];
+    const next = bodySections[segment + 1];
+    const previous = bodySections[Math.max(0, segment - 1)];
+    const following = bodySections[Math.min(bodySections.length - 1, segment + 2)];
+    const t = (z - current[0]) / (next[0] - current[0]);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (
+      2 * current[channel] +
+      (-previous[channel] + next[channel]) * t +
+      (2 * previous[channel] - 5 * current[channel] + 4 * next[channel] - following[channel]) * t2 +
+      (-previous[channel] + 3 * current[channel] - 3 * next[channel] + following[channel]) * t3
+    );
+  };
+  const smoothstep = (edge0: number, edge1: number, value: number) => {
+    const t = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
 
-  // High Arched Front Fender Crests (Left and Right peaks flanking the hood)
+  for (let longitudinal = 0; longitudinal <= longitudinalSegments; longitudinal++) {
+    const z = THREE.MathUtils.lerp(
+      bodySections[0][0],
+      bodySections[bodySections.length - 1][0],
+      longitudinal / longitudinalSegments
+    );
+    const halfWidth = interpolateSection(z, 1);
+    const centerY = interpolateSection(z, 2);
+    const halfHeight = interpolateSection(z, 3);
+
+    for (let radial = 0; radial < radialSegments; radial++) {
+      const angle = (radial / radialSegments) * Math.PI * 2;
+      const sin = Math.sin(angle);
+      const cos = Math.cos(angle);
+      const shoulder = Math.max(0, cos);
+      const lower = Math.max(0, -cos);
+      let x = halfWidth * sin * (1 + 0.075 * shoulder - 0.055 * lower);
+      wheelSpecs.forEach((spec) => {
+        if (!spec.isLeft) return;
+        const radius = spec.isFront ? 0.32 : 0.35;
+        const distance = Math.abs(z - spec.z);
+        const wheelInfluence = 1 - smoothstep(radius * 0.82, radius * 1.25, distance);
+        const sideWeight = smoothstep(0.58, 0.96, Math.abs(sin));
+        const lowerWeight = smoothstep(0.08, 0.74, lower);
+        x *= 1 - 0.24 * wheelInfluence * sideWeight * lowerWeight;
+      });
+      const y = centerY + halfHeight * Math.sign(cos) * Math.pow(Math.abs(cos), 0.78);
+      vertices.push(x, y, z);
+    }
+  }
+
+  for (let longitudinal = 0; longitudinal < longitudinalSegments; longitudinal++) {
+    for (let radial = 0; radial < radialSegments; radial++) {
+      const nextRadial = (radial + 1) % radialSegments;
+      const a = longitudinal * radialSegments + radial;
+      const b = (longitudinal + 1) * radialSegments + radial;
+      const c = (longitudinal + 1) * radialSegments + nextRadial;
+      const d = longitudinal * radialSegments + nextRadial;
+      indices.push(a, b, d, b, c, d);
+    }
+  }
+
+  const chassisGeometry = new THREE.BufferGeometry();
+  chassisGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  chassisGeometry.setIndex(indices);
+  chassisGeometry.computeVertexNormals();
+  const chassis = new THREE.Mesh(chassisGeometry, titaniumBodyPaint);
+  chassis.name = 'AERO_X_Sculpted_Chassis';
+  chassis.castShadow = true;
+  chassis.receiveShadow = true;
+  bodyGroup.add(chassis);
+
+  // Slim crystalline LED headlights sit on the sculpted front shoulders.
   [-0.78, 0.78].forEach((x) => {
-    // Fender arch peak
-    const crestCurve = new THREE.CylinderGeometry(0.22, 0.28, 1.45, 12);
-    crestCurve.rotateX(Math.PI * 0.5);
-    crestCurve.scale(0.85, 0.55, 1.0);
-    const crest = new THREE.Mesh(crestCurve, titaniumBodyPaint);
-    crest.position.set(x, 0.46, -1.35);
-    crest.rotation.y = x > 0 ? -0.06 : 0.06;
-    crest.castShadow = true;
-    bodyGroup.add(crest);
-
-    // Flared wheel arch crown
-    const archCrownGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.16, 16, 1, false, 0, Math.PI);
-    archCrownGeo.rotateZ(Math.PI * 0.5);
-    const archCrown = new THREE.Mesh(archCrownGeo, titaniumBodyPaint);
-    archCrown.position.set(x > 0 ? x + 0.12 : x - 0.12, 0.34, -1.25);
-    bodyGroup.add(archCrown);
-
     // Sleek diagonal LED headlight embedded in fender crest
     const headGeo = new THREE.BoxGeometry(0.08, 0.035, 0.42);
     const headMesh = new THREE.Mesh(headGeo, headlightMat);
-    headMesh.position.set(x > 0 ? x - 0.08 : x + 0.08, 0.48, -1.65);
+    headMesh.position.set(x * 0.90, 0.525, -1.70);
     headMesh.rotation.y = x > 0 ? -0.15 : 0.15;
     headMesh.rotation.z = x > 0 ? -0.25 : 0.25;
     bodyGroup.add(headMesh);
@@ -256,24 +436,6 @@ export function createAeroXModel(): VehicleModelInstance {
     bodyGroup.add(tunnel);
   });
 
-  // Muscular outer rear fender shoulders (encasing the venturi tunnels)
-  [-0.95, 0.95].forEach((x) => {
-    const haunchGeo = new THREE.CylinderGeometry(0.32, 0.36, 1.75, 14);
-    haunchGeo.rotateX(Math.PI * 0.5);
-    haunchGeo.scale(0.85, 0.62, 1.0);
-    const haunch = new THREE.Mesh(haunchGeo, titaniumBodyPaint);
-    haunch.position.set(x, 0.48, 1.25);
-    haunch.castShadow = true;
-    bodyGroup.add(haunch);
-
-    // Rear wheel arch crown flare
-    const rearArchGeo = new THREE.CylinderGeometry(0.44, 0.44, 0.18, 16, 1, false, 0, Math.PI);
-    rearArchGeo.rotateZ(Math.PI * 0.5);
-    const rearArch = new THREE.Mesh(rearArchGeo, titaniumBodyPaint);
-    rearArch.position.set(x > 0 ? x + 0.08 : x - 0.08, 0.36, 1.25);
-    bodyGroup.add(rearArch);
-  });
-
   // =========================================================================
   // 5. ACTIVE REAR WING, RUBY LED BLADE & REAR DIFFUSER
   // =========================================================================
@@ -308,6 +470,7 @@ export function createAeroXModel(): VehicleModelInstance {
   const rearBlade = new THREE.Mesh(rearBladeGeo, rearLightBladeMat);
   rearBlade.position.set(0, 0.56, 2.22);
   bodyGroup.add(rearBlade);
+  rearBladeMesh = rearBlade;
 
   // Deep Rear Venturi Diffuser Tray
   const diffuserGeo = new THREE.BoxGeometry(1.88, 0.16, 0.85);
@@ -345,6 +508,7 @@ export function createAeroXModel(): VehicleModelInstance {
     const nozMesh = new THREE.Mesh(nozGeo, thrusterNozzleMat);
     nozMesh.position.copy(pos);
     bodyGroup.add(nozMesh);
+    boosterNozzles.push(nozMesh);
 
     // Glowing Cold-Gas Plasma Core
     const coreGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.03, 12);
@@ -352,6 +516,7 @@ export function createAeroXModel(): VehicleModelInstance {
     const coreMesh = new THREE.Mesh(coreGeo, thrusterPlasmaMat);
     coreMesh.position.copy(pos).add(new THREE.Vector3(0, 0, 0.06));
     bodyGroup.add(coreMesh);
+    boosterCores.push(coreMesh);
 
     // Tapered Flame Cone
     const flameGeo = new THREE.ConeGeometry(0.11, 0.95, 12);
@@ -375,17 +540,10 @@ export function createAeroXModel(): VehicleModelInstance {
   // =========================================================================
   // 7. HIGH-DETAIL WHEELS (Slender Multi-Spoke Rims with Yellow Calipers)
   // =========================================================================
-  const wheelSpecs = [
-    { x: -0.90, y: 0.32, z: -1.25, isFront: true, isLeft: true },
-    { x: 0.90, y: 0.32, z: -1.25, isFront: true, isLeft: false },
-    { x: -0.96, y: 0.35, z: 1.25, isFront: false, isLeft: true },
-    { x: 0.96, y: 0.35, z: 1.25, isFront: false, isLeft: false },
-  ];
-
   wheelSpecs.forEach((spec) => {
     const wheelAnchor = new THREE.Group();
     wheelAnchor.position.set(spec.x, spec.y, spec.z);
-    rootGroup.add(wheelAnchor);
+    proceduralWheelGroup.add(wheelAnchor);
 
     if (spec.isFront) {
       frontSteerNodes.push(wheelAnchor);
@@ -481,6 +639,84 @@ export function createAeroXModel(): VehicleModelInstance {
   contactShadow.rotation.x = -Math.PI * 0.5;
   contactShadow.position.set(0, 0.02, 0);
 
+  void loadAeroXAsset()
+    .then((gltf) => {
+      if (isDisposed) return;
+
+      const sourceScene = gltf.scene.clone(true);
+      sourceScene.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(sourceScene);
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      if (!Number.isFinite(size.z) || size.z <= 0) {
+        throw new Error('The AERO-X GLB has invalid model bounds.');
+      }
+
+      const scale = 4.4 / size.z;
+      const assetRoot = new THREE.Group();
+      assetRoot.name = 'AERO_X_Normalized_GLTF';
+      assetRoot.scale.setScalar(scale);
+      assetRoot.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+      assetRoot.add(sourceScene);
+      assetBodyGroup.add(assetRoot);
+      assetRoot.updateWorldMatrix(true, true);
+
+      sourceScene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+        }
+      });
+
+      const wheelRig = attachAeroXWheelPivots(assetRoot);
+      wheels.splice(0, wheels.length, ...wheelRig.pivots);
+      frontSteerNodes.splice(0, frontSteerNodes.length, ...wheelRig.frontPivots);
+
+      const rearZ = (bounds.max.z - center.z) * scale;
+      if (rearBladeMesh) {
+        assetAccentGroup.add(rearBladeMesh);
+        rearBladeMesh.position.set(0, 0.56, rearZ - 0.06);
+      }
+      const nozzlePositions = [
+        new THREE.Vector3(-0.43, 0.34, rearZ - 0.18),
+        new THREE.Vector3(0.43, 0.34, rearZ - 0.18),
+        new THREE.Vector3(-0.18, 0.24, rearZ - 0.18),
+        new THREE.Vector3(0.18, 0.24, rearZ - 0.18),
+      ];
+
+      boosterNozzles.forEach((nozzle, index) => {
+        assetAccentGroup.add(nozzle);
+        nozzle.position.copy(nozzlePositions[index]);
+      });
+      boosterCores.forEach((core, index) => {
+        assetAccentGroup.add(core);
+        core.position.copy(nozzlePositions[index]).add(new THREE.Vector3(0, 0, 0.06));
+      });
+      thrusterFlames.forEach((flame, index) => {
+        assetBodyGroup.add(flame);
+        flame.position.copy(nozzlePositions[index]);
+      });
+      thrusterLights.forEach((light, index) => {
+        assetBodyGroup.add(light);
+        light.position.copy(nozzlePositions[index]).add(new THREE.Vector3(0, 0, 0.3));
+      });
+      thrusterPositions.splice(
+        0,
+        thrusterPositions.length,
+        ...nozzlePositions.map((position) => position.clone())
+      );
+
+      loadedAssetRoot = assetRoot;
+      bodyGroup.visible = false;
+      proceduralWheelGroup.visible = false;
+    })
+    .catch((error: unknown) => {
+      if (!isDisposed) {
+        console.error('Failed to load the AERO-X GLB; keeping the procedural model.', error);
+      }
+    });
+
   // =========================================================================
   // 9. ANIMATION UPDATE & CLEANUP HOOKS
   // =========================================================================
@@ -510,6 +746,8 @@ export function createAeroXModel(): VehicleModelInstance {
     // Roll and pitch
     bodyGroup.rotation.z = bankAngle * 0.35;
     bodyGroup.rotation.x = isFlying ? -0.06 : 0;
+    assetBodyGroup.rotation.z = bodyGroup.rotation.z;
+    assetBodyGroup.rotation.x = bodyGroup.rotation.x;
 
     // Thruster flame exhaust
     const thrustActive = isFlying && flightEnergy > 0;
@@ -532,23 +770,17 @@ export function createAeroXModel(): VehicleModelInstance {
   };
 
   const dispose = () => {
+    isDisposed = true;
+    disposeOwnedResources(bodyGroup);
+    disposeOwnedResources(proceduralWheelGroup);
+    disposeOwnedResources(assetAccentGroup);
+    thrusterFlames.forEach((flame) => flame.geometry.dispose());
+    thrusterPlasmaMat.dispose();
     shadowTexture.dispose();
     shadowGeo.dispose();
     shadowMat.dispose();
 
-    rootGroup.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        if (mesh.material) {
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach((m) => m.dispose());
-          } else {
-            mesh.material.dispose();
-          }
-        }
-      }
-    });
+    loadedAssetRoot?.removeFromParent();
   };
 
   return {
