@@ -1,0 +1,6 @@
+{
+  "name": "NEON OVERDRIVE",
+  "description": "A premium futuristic arcade driving experience featuring pseudo-3D highway racing, aerodynamic hypercar flight mechanics, dynamic traffic, and cyber synthwave aesthetics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
