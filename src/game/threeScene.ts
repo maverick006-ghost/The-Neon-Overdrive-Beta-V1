@@ -1905,7 +1905,7 @@ export class ThreeSceneManager {
     );
 
     // Emit thruster smoke & sparks when airborne (originating at vehicle thruster nozzles)
-    if (isAirborne && Math.random() > 0.35 && this.currentVehicle.thrusterPositions.length > 0) {
+    if (dt > 0 && isAirborne && Math.random() > 0.35 && this.currentVehicle.thrusterPositions.length > 0) {
       const tPositions = this.currentVehicle.thrusterPositions;
       const noz = tPositions[Math.floor(Math.random() * tPositions.length)];
       const worldNozX = targetCarX + noz.x;
@@ -1958,7 +1958,7 @@ export class ThreeSceneManager {
     }
 
     // High-speed ground dust kickup behind tires on Moon and Mars
-    if (!isAirborne && (this.currentWorld === 'MOON' || this.currentWorld === 'MARS') && player.speed > 130 && Math.random() > 0.65) {
+    if (dt > 0 && !isAirborne && (this.currentWorld === 'MOON' || this.currentWorld === 'MARS') && player.speed > 130 && Math.random() > 0.65) {
       const isLeftTire = Math.random() > 0.5;
       const tireOffset = isLeftTire ? -0.84 : 0.84;
       const dustColor = this.currentWorld === 'MOON'

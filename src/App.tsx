@@ -62,6 +62,11 @@ export default function App() {
     fly: false,
   });
 
+  const handleClearInput = useCallback(() => {
+    engineRef.current.clearInputState();
+    setTouchInput({ left: false, right: false, fly: false });
+  }, []);
+
   const handleSelectWorld = useCallback((world: GameWorld) => {
     sound.init();
     sound.playUiClick();
@@ -97,6 +102,7 @@ export default function App() {
     sound.init();
     sound.playUiClick();
     engineRef.current.reset();
+    setTouchInput({ left: false, right: false, fly: false });
     setStatus('PLAYING');
     setIsNewRecord(false);
   }, []);
@@ -106,22 +112,25 @@ export default function App() {
     sound.init();
     sound.playUiClick();
     sound.stopLoops();
+    handleClearInput();
     engineRef.current.isPaused = true;
     setStatus('PAUSED');
-  }, [status]);
+  }, [status, handleClearInput]);
 
   const handleResumeGame = useCallback(() => {
     if (status !== 'PAUSED') return;
     sound.init();
     sound.playUiClick();
+    handleClearInput();
     engineRef.current.isPaused = false;
     setStatus('PLAYING');
-  }, [status]);
+  }, [status, handleClearInput]);
 
   const handleRestartGame = useCallback(() => {
     sound.init();
     sound.playUiClick();
     engineRef.current.reset();
+    setTouchInput({ left: false, right: false, fly: false });
     setStatus('PLAYING');
     setIsNewRecord(false);
   }, []);
@@ -130,12 +139,15 @@ export default function App() {
     sound.init();
     sound.playUiClick();
     sound.stopLoops();
+    handleClearInput();
     engineRef.current.reset();
+    setTouchInput({ left: false, right: false, fly: false });
     setStatus('MENU');
     setIsNewRecord(false);
-  }, []);
+  }, [handleClearInput]);
 
   const handleGameOver = useCallback((stats: GameStats) => {
+    handleClearInput();
     const prevHighScore = Number(localStorage.getItem('neon_overdrive_high_score') || '0');
     if (stats.score > prevHighScore) {
       setIsNewRecord(true);
@@ -143,7 +155,7 @@ export default function App() {
     }
     setFinalStats(stats);
     setStatus('GAMEOVER');
-  }, []);
+  }, [handleClearInput]);
 
   const handleUpdateHUD = useCallback(
     (player: PlayerCar, currentScore: number, currentDistance: number, alert: string | null) => {
@@ -188,6 +200,7 @@ export default function App() {
         vehicle={selectedVehicle}
         onGameOver={handleGameOver}
         onUpdateHUD={handleUpdateHUD}
+        onClearInput={handleClearInput}
         touchInput={touchInput}
       />
 
@@ -212,10 +225,6 @@ export default function App() {
         <TouchControls
           onSteerLeft={() => engineRef.current.steerLeft()}
           onSteerRight={() => engineRef.current.steerRight()}
-          onTouchFlightChange={(flying) => {
-            engineRef.current.setTouchFlightInput(flying);
-            setTouchInput((prev) => ({ ...prev, fly: flying }));
-          }}
           onTouchStateChange={setTouchInput}
         />
       )}

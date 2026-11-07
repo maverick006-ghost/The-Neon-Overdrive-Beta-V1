@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Play, RotateCcw, Volume2, VolumeX, Home } from 'lucide-react';
 import { GameWorld, WORLD_CONFIGS } from '../game/types';
 
@@ -24,17 +24,6 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   isMuted,
   onToggleMute,
 }) => {
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'KeyP' || e.code === 'Escape') {
-        e.preventDefault();
-        onResume();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onResume]);
-
   const worldCfg = WORLD_CONFIGS[world];
 
   return (

@@ -10,30 +10,33 @@ import { TouchInputState } from '../game/types';
 interface TouchControlsProps {
   onSteerLeft: () => void;
   onSteerRight: () => void;
-  onTouchFlightChange?: (flying: boolean) => void;
   onTouchStateChange?: (state: TouchInputState) => void;
 }
 
 export const TouchControls: React.FC<TouchControlsProps> = ({
   onSteerLeft,
   onSteerRight,
-  onTouchFlightChange,
   onTouchStateChange,
 }) => {
   const [isFlying, setIsFlying] = useState(false);
 
-  const handleFlightStart = (e: React.TouchEvent | React.MouseEvent) => {
-    e.preventDefault();
-    setIsFlying(true);
-    onTouchFlightChange?.(true);
-    onTouchStateChange?.({ left: false, right: false, fly: true });
+  const setFlightState = (flying: boolean) => {
+    setIsFlying(flying);
+    onTouchStateChange?.({ left: false, right: false, fly: flying });
   };
 
-  const handleFlightEnd = (e: React.TouchEvent | React.MouseEvent) => {
+  const handleFlightStart = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
-    setIsFlying(false);
-    onTouchFlightChange?.(false);
-    onTouchStateChange?.({ left: false, right: false, fly: false });
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setFlightState(true);
+  };
+
+  const handleFlightEnd = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    setFlightState(false);
   };
 
   return (
@@ -41,24 +44,22 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       {/* Left & Right Steering Pad */}
       <div className="flex items-center gap-2.5 pointer-events-auto">
         <button
-          onTouchStart={(e) => {
+          onPointerDown={(e) => {
             e.preventDefault();
             onSteerLeft();
           }}
-          onClick={onSteerLeft}
           aria-label="Steer Left"
-          className="w-13 h-13 rounded-[2px] bg-[#0e1117]/85 active:bg-[#1a202c] border border-[#232936] text-[#f5f5f3] flex items-center justify-center transition-all shadow-md active:scale-95"
+          className="touch-none w-13 h-13 rounded-[2px] bg-[#0e1117]/85 active:bg-[#1a202c] border border-[#232936] text-[#f5f5f3] flex items-center justify-center transition-all shadow-md active:scale-95"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <button
-          onTouchStart={(e) => {
+          onPointerDown={(e) => {
             e.preventDefault();
             onSteerRight();
           }}
-          onClick={onSteerRight}
           aria-label="Steer Right"
-          className="w-13 h-13 rounded-[2px] bg-[#0e1117]/85 active:bg-[#1a202c] border border-[#232936] text-[#f5f5f3] flex items-center justify-center transition-all shadow-md active:scale-95"
+          className="touch-none w-13 h-13 rounded-[2px] bg-[#0e1117]/85 active:bg-[#1a202c] border border-[#232936] text-[#f5f5f3] flex items-center justify-center transition-all shadow-md active:scale-95"
         >
           <ArrowRight className="w-5 h-5" />
         </button>
@@ -67,13 +68,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       {/* Flight Thruster Lift Button */}
       <div className="pointer-events-auto">
         <button
-          onTouchStart={handleFlightStart}
-          onTouchEnd={handleFlightEnd}
-          onMouseDown={handleFlightStart}
-          onMouseUp={handleFlightEnd}
-          onMouseLeave={handleFlightEnd}
+          onPointerDown={handleFlightStart}
+          onPointerUp={handleFlightEnd}
+          onPointerCancel={handleFlightEnd}
           aria-label="Engage Flight Thrusters"
-          className={`w-14 h-14 rounded-[2px] border flex flex-col items-center justify-center transition-all shadow-lg active:scale-95 ${
+          className={`touch-none w-14 h-14 rounded-[2px] border flex flex-col items-center justify-center transition-all shadow-lg active:scale-95 ${
             isFlying
               ? 'bg-[#00F0FF] border-[#f5f5f3] text-[#080808] shadow-[0_0_18px_rgba(0,240,255,0.7)]'
               : 'bg-[#0e1117]/85 border-[#2b3342] text-[#f5f5f3]'

@@ -30,6 +30,7 @@ export class GameEngine {
 
   public isGameOver: boolean = false;
   public isPaused: boolean = false;
+  public runId: number = 0;
   public nearMissAlert: string | null = null;
   public nearMissTimer: number = 0;
 
@@ -40,6 +41,7 @@ export class GameEngine {
   private coinCombo: number = 0;
   private coinComboResetTimer: number = 0;
   private wasAirborne: boolean = false;
+  private highScoreNeedsSave = false;
 
   public keyboardFlightActive: boolean = false;
   public touchFlightActive: boolean = false;
@@ -97,6 +99,8 @@ export class GameEngine {
   }
 
   public reset() {
+    this.persistHighScore();
+    this.runId++;
     this.player = this.createInitialPlayer();
     this.objects = [];
     this.roadScrollZ = 0;
@@ -120,8 +124,7 @@ export class GameEngine {
     this.nearMissTimer = 0;
     this.spawnCooldown = 0.4;
     this.powerupCooldown = 12.0;
-    this.keyboardFlightActive = false;
-    this.touchFlightActive = false;
+    this.clearInputState();
     this.coinCombo = 0;
     this.coinComboResetTimer = 0;
     this.wasAirborne = false;
@@ -152,13 +155,24 @@ export class GameEngine {
   }
 
   public setFlightInput(wantFlight: boolean) {
-    if (this.isGameOver || this.isPaused) return;
+    if (wantFlight && (this.isGameOver || this.isPaused)) return;
     this.keyboardFlightActive = wantFlight;
   }
 
   public setTouchFlightInput(wantFlight: boolean) {
-    if (this.isGameOver || this.isPaused) return;
+    if (wantFlight && (this.isGameOver || this.isPaused)) return;
     this.touchFlightActive = wantFlight;
+  }
+
+  public clearInputState() {
+    this.keyboardFlightActive = false;
+    this.touchFlightActive = false;
+  }
+
+  public persistHighScore() {
+    if (!this.highScoreNeedsSave) return;
+    this.saveSafeNumber('neon_overdrive_high_score', this.highScore);
+    this.highScoreNeedsSave = false;
   }
 
   public update(dt: number) {
@@ -255,7 +269,7 @@ export class GameEngine {
 
     if (this.score > this.highScore) {
       this.highScore = this.score;
-      this.saveSafeNumber('neon_overdrive_high_score', this.highScore);
+      this.highScoreNeedsSave = true;
     }
 
     // 5. Smooth Player Interpolation (Lane change and Altitude)
@@ -703,6 +717,8 @@ export class GameEngine {
     if (this.player.shields <= 0) {
       // Game Over
       this.isGameOver = true;
+      this.clearInputState();
+      this.persistHighScore();
       sound.playGameOver();
     } else {
       // Minor bounce-back / levitate if gap

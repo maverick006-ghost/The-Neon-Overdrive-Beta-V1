@@ -17,8 +17,16 @@ interface GameCanvasProps {
   vehicle: VehicleId;
   onGameOver: (stats: GameStats) => void;
   onUpdateHUD: (player: PlayerCar, score: number, distance: number, alert: string | null) => void;
+  onClearInput: () => void;
   touchInput: TouchInputState;
 }
+
+const SIMULATION_STEP = 1 / 60;
+const MAX_FRAME_DELTA = 0.1;
+const MAX_SIMULATION_STEPS_PER_FRAME = 5;
+const MAX_ACCUMULATED_TIME = SIMULATION_STEP * MAX_SIMULATION_STEPS_PER_FRAME;
+const SIMULATION_EPSILON = 1e-10;
+const HUD_UPDATE_INTERVAL = 0.1;
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   engine,
@@ -28,20 +36,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   vehicle,
   onGameOver,
   onUpdateHUD,
+  onClearInput,
   touchInput,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneManagerRef = useRef<ThreeSceneManager | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
-  const lastTimeRef = useRef<number>(performance.now());
+  const lastTimeRef = useRef<number>(0);
+  const simulationAccumulatorRef = useRef<number>(0);
+  const hudAccumulatorRef = useRef<number>(0);
   const [contextLost, setContextLost] = useState(false);
 
   // Use refs for props so the render loop always accesses current values
   // WITHOUT re-triggering the useEffect or recreating the Three.js scene/context
   const isPlayingRef = useRef<boolean>(isPlaying);
   const isMenuRef = useRef<boolean>(status === 'MENU');
+  const statusRef = useRef<GameStatus>(status);
+  const runIdRef = useRef<number>(engine.runId);
   const onGameOverRef = useRef(onGameOver);
   const onUpdateHUDRef = useRef(onUpdateHUD);
+  const onClearInputRef = useRef(onClearInput);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -49,6 +63,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   useEffect(() => {
     isMenuRef.current = status === 'MENU';
+    statusRef.current = status;
+    simulationAccumulatorRef.current = 0;
+    hudAccumulatorRef.current = 0;
+    lastTimeRef.current = performance.now();
+    if (status !== 'PLAYING') onClearInputRef.current();
   }, [status]);
 
   useEffect(() => {
@@ -58,6 +77,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     onUpdateHUDRef.current = onUpdateHUD;
   }, [onUpdateHUD]);
+
+  useEffect(() => {
+    onClearInputRef.current = onClearInput;
+  }, [onClearInput]);
 
   // Synchronize dynamic environment switching without remounting canvas or scene
   useEffect(() => {
@@ -73,7 +96,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, [vehicle]);
 
-  // Keep touch flight input in sync with engine
+  // Keep touch flight input in sync with the authoritative engine state.
   useEffect(() => {
     engine.setTouchFlightInput(touchInput.fly);
   }, [engine, touchInput.fly]);
@@ -98,15 +121,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleContextRestored = () => {
       setContextLost(false);
       lastTimeRef.current = performance.now();
+      simulationAccumulatorRef.current = 0;
     };
 
-    // Handle tab visibility changes: pause simulation & audio; reset frame time on return
+    // Handle tab visibility changes: clear held inputs and reset the simulation clock.
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        onClearInputRef.current();
+        simulationAccumulatorRef.current = 0;
+        hudAccumulatorRef.current = 0;
+        lastTimeRef.current = performance.now();
         sound.stopLoops();
       } else {
-        // Reset frame-time baseline so car does not jump forward
         lastTimeRef.current = performance.now();
+        simulationAccumulatorRef.current = 0;
       }
     };
 
@@ -115,40 +143,90 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     canvas.addEventListener('webglcontextlost', handleContextLost);
     canvas.addEventListener('webglcontextrestored', handleContextRestored);
 
-    // Main 60fps single animation loop
+    let gameOverReported = false;
     const renderLoop = (currentTime: number) => {
-      // If tab was hidden, reset baseline and skip step
+      const observedRunId = engine.runId;
+      if (observedRunId !== runIdRef.current) {
+        runIdRef.current = observedRunId;
+        simulationAccumulatorRef.current = 0;
+        hudAccumulatorRef.current = 0;
+        gameOverReported = false;
+        lastTimeRef.current = currentTime;
+      }
+
       if (document.hidden) {
         lastTimeRef.current = currentTime;
         animationFrameIdRef.current = requestAnimationFrame(renderLoop);
         return;
       }
 
-      const rawDt = (currentTime - lastTimeRef.current) / 1000;
+      const rawDt = Math.max(0, (currentTime - lastTimeRef.current) / 1000);
       lastTimeRef.current = currentTime;
+      const renderDt = Math.min(rawDt, 0.05);
 
-      // Strict delta-time clamping (max 50ms) to prevent physics jumps
-      const dt = Math.min(Math.max(rawDt, 0), 0.05);
-
-      if (isPlayingRef.current && !engine.isPaused) {
-        engine.update(dt);
-
-        onUpdateHUDRef.current(
-          { ...engine.player },
-          engine.score,
-          engine.distance,
-          engine.nearMissAlert
+      const canSimulate =
+        isPlayingRef.current &&
+        statusRef.current === 'PLAYING' &&
+        !engine.isPaused &&
+        !engine.isGameOver;
+      if (canSimulate) {
+        simulationAccumulatorRef.current = Math.min(
+          simulationAccumulatorRef.current + Math.min(rawDt, MAX_FRAME_DELTA),
+          MAX_ACCUMULATED_TIME
         );
+        let steps = 0;
+        while (
+          simulationAccumulatorRef.current + SIMULATION_EPSILON >= SIMULATION_STEP &&
+          steps < MAX_SIMULATION_STEPS_PER_FRAME
+        ) {
+          engine.update(SIMULATION_STEP);
+          simulationAccumulatorRef.current = Math.max(
+            0,
+            simulationAccumulatorRef.current - SIMULATION_STEP
+          );
+          hudAccumulatorRef.current += SIMULATION_STEP;
+          steps++;
 
-        if (engine.isGameOver) {
-          onGameOverRef.current(engine.getStats());
+          if (engine.isGameOver) {
+            onClearInputRef.current();
+            engine.persistHighScore();
+            if (!gameOverReported) {
+              gameOverReported = true;
+              onUpdateHUDRef.current(
+                { ...engine.player },
+                engine.score,
+                engine.distance,
+                engine.nearMissAlert
+              );
+              onGameOverRef.current(engine.getStats());
+            }
+            simulationAccumulatorRef.current = 0;
+            break;
+          }
         }
+
+        if (
+          steps > 0 &&
+          hudAccumulatorRef.current >= HUD_UPDATE_INTERVAL &&
+          !engine.isGameOver
+        ) {
+          hudAccumulatorRef.current %= HUD_UPDATE_INTERVAL;
+          onUpdateHUDRef.current(
+            { ...engine.player },
+            engine.score,
+            engine.distance,
+            engine.nearMissAlert
+          );
+        }
+      } else {
+        simulationAccumulatorRef.current = 0;
+        hudAccumulatorRef.current = 0;
       }
 
       // Update 3D scene (Road, Car, Flight, Obstacles, Particles, Camera)
       if (!sceneManager.isContextLost) {
         sceneManager.update(
-          dt,
+          canSimulate || statusRef.current === 'MENU' ? renderDt : 0,
           engine.player,
           engine.objects,
           engine.screenShake,
@@ -165,6 +243,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     animationFrameIdRef.current = requestAnimationFrame(renderLoop);
 
     return () => {
+      engine.clearInputState();
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       canvas.removeEventListener('webglcontextlost', handleContextLost);
@@ -183,6 +262,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Global Keyboard Controls (A/D or Left/Right for steering, Space for vertical flight)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (statusRef.current !== 'PLAYING') return;
+
       // Prevent browser scroll on game keys
       if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
         e.preventDefault();
@@ -209,7 +290,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     const handleBlur = () => {
-      engine.setFlightInput(false);
+      onClearInputRef.current();
+      simulationAccumulatorRef.current = 0;
+      lastTimeRef.current = performance.now();
     };
 
     window.addEventListener('keydown', handleKeyDown);
